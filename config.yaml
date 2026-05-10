@@ -1,0 +1,28 @@
+server:
+  port: "5000"
+  api_key: ""
+
+database:
+  status: true
+  host: "localhost"
+  port: "5432"
+  database: "ATTENDANCE_DB"
+  user: "admin"
+  password: "Qdafjnftt854!"
+  ssl_mode: "disable"
+
+minio:
+  endpoint: "localhost:9000"
+  access_key: "admin"
+  secret_key: "Hsjdnvftrmm630!"
+  bucket_name: "attendance"
+  use_ssl: false
+
+jira:
+  url: "https://farchanputra1358.atlassian.net/"
+  email: "farchanputra1358@gmail.com"
+  token: "ATATT3xFfGF0zgMVd39lnaa-qAAK6w0cGbG5YHbl09x6LtRmIConuDIER8_ucQsJ1uo6rcpsP4dDKuRWRyboOH78L_MoSmRQB-G85pCho9YKYb-lmt7BqyyB5oQJQHsu4UHbNMb7j6TnQKo81fX3HITNomWWRyxaoG8FTc-WDzR55RYvApsfei8=ED1B64E3"
+  project_key: "SCRUM"
+
+ml_service:
+  url: "http://localhost:8001"
