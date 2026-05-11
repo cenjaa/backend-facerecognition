@@ -47,12 +47,12 @@ func (r *FaceRPCASQLRepository) VerifyAdminPin(ctx context.Context, userID int, 
 
 //User Functions
 func (r *FaceRPCASQLRepository) GetByID(ctx context.Context, userID int) (*domain.User, error) {
-	query := `SELECT id_user, nama, nip, COALESCE(email, ''), active
+	query := `SELECT id_user, nama, nip, COALESCE(email, ''), active, COALESCE(created_by, ''), COALESCE(dataset_path, '')
 	          FROM ms_user WHERE id_user = $1`
 
 	var u domain.User
 	err := r.DB.QueryRowContext(ctx, query, userID).Scan(
-		&u.IDUser, &u.Name, &u.NIP, &u.Email, &u.Active,
+		&u.IDUser, &u.Name, &u.NIP, &u.Email, &u.Active, &u.CreatedBy, &u.DatasetPath,
 	)
 	if err != nil {
 		return nil, err
@@ -60,13 +60,13 @@ func (r *FaceRPCASQLRepository) GetByID(ctx context.Context, userID int) (*domai
 	return &u, nil
 }
 
-func (r *FaceRPCASQLRepository) CreateUser(ctx context.Context, name, nip, email string) (int, error) {
-	query := `INSERT INTO ms_user (nama, nip, email, active)
-	          VALUES ($1, $2, $3, TRUE)
+func (r *FaceRPCASQLRepository) CreateUser(ctx context.Context, name, nip, email, createdBy, datasetPath string) (int, error) {
+	query := `INSERT INTO ms_user (nama, nip, email, active, created_by, dataset_path)
+	          VALUES ($1, $2, $3, TRUE, $4, $5)
 	          RETURNING id_user`
 
 	var newID int
-	err := r.DB.QueryRowContext(ctx, query, name, nip, email).Scan(&newID)
+	err := r.DB.QueryRowContext(ctx, query, name, nip, email, createdBy, datasetPath).Scan(&newID)
 	if err != nil {
 		return 0, err
 	}
@@ -87,7 +87,7 @@ func (r *FaceRPCASQLRepository) GetUserNameByID(ctx context.Context, userID int)
 }
 
 func (r *FaceRPCASQLRepository) GetAllActiveUsers(ctx context.Context) ([]domain.User, error) {
-	query := `SELECT id_user, nama, nip, COALESCE(email, ''), active
+	query := `SELECT id_user, nama, nip, COALESCE(email, ''), active, COALESCE(created_by, ''), COALESCE(dataset_path, '')
 	          FROM ms_user WHERE active = TRUE`
 
 	rows, err := r.DB.QueryContext(ctx, query)
@@ -99,7 +99,7 @@ func (r *FaceRPCASQLRepository) GetAllActiveUsers(ctx context.Context) ([]domain
 	var users []domain.User
 	for rows.Next() {
 		var u domain.User
-		if err := rows.Scan(&u.IDUser, &u.Name, &u.NIP, &u.Email, &u.Active); err != nil {
+		if err := rows.Scan(&u.IDUser, &u.Name, &u.NIP, &u.Email, &u.Active, &u.CreatedBy, &u.DatasetPath); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -623,4 +623,19 @@ func (r *FaceRPCASQLRepository) GetHourlyFrequency(ctx context.Context) (*domain
 		}
 	}
 	return freq, nil
+}
+
+func (r *FaceRPCASQLRepository) GetTotalUserCount(ctx context.Context) (int, error) {
+	var count int
+	err := r.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM ms_user").Scan(&count)
+	return count, err
+}
+
+func (r *FaceRPCASQLRepository) GetTodayAttendeeCount(ctx context.Context) (int, error) {
+	var count int
+	// Unique users with status Hadir (1) or Telat (3) today
+	query := `SELECT COUNT(DISTINCT id_user) FROM tbl_log_attendance 
+	          WHERE DATE(presence_time) = CURRENT_DATE AND id_status IN (1, 3)`
+	err := r.DB.QueryRowContext(ctx, query).Scan(&count)
+	return count, err
 }

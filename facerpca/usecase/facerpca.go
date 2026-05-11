@@ -31,11 +31,11 @@ func NewFaceRPCAUsecase(m domain.FaceRPCAMinIORepository, s domain.FaceRPCASQLRe
 	}
 }
 
-func (uc *FaceRPCAUsecase) CreateUser(ctx context.Context, name, nip, email string) (int, error) {
+func (uc *FaceRPCAUsecase) CreateUser(ctx context.Context, name, nip, email, createdBy, datasetPath string) (int, error) {
 	if name == "" || nip == "" {
 		return 0, fmt.Errorf("name and nip are required")
 	}
-	return uc.SQLRepo.CreateUser(ctx, name, nip, email)
+	return uc.SQLRepo.CreateUser(ctx, name, nip, email, createdBy, datasetPath)
 }
 
 func (uc *FaceRPCAUsecase) UpdateUser(ctx context.Context, userID int, name, nip string, active bool) error {
@@ -376,4 +376,35 @@ func (uc *FaceRPCAUsecase) GetJiraHistory(ctx context.Context, page, perPage int
 
 func (uc *FaceRPCAUsecase) GetKpiAccumulation(ctx context.Context, page, perPage int) (*domain.PaginatedResult[domain.KpiAccumulationRow], error) {
 	return uc.SQLRepo.GetKpiAccumulation(ctx, page, perPage)
+}
+
+func (uc *FaceRPCAUsecase) GetAdminDashboard(ctx context.Context, adminID int) (*domain.AdminDashboard, error) {
+	adminName, err := uc.SQLRepo.GetUserNameByID(ctx, adminID)
+	if err != nil {
+		adminName = "Admin"
+	}
+
+	totalUsers, err := uc.SQLRepo.GetTotalUserCount(ctx)
+	if err != nil {
+		totalUsers = 0
+	}
+
+	todayAttendees, err := uc.SQLRepo.GetTodayAttendeeCount(ctx)
+	if err != nil {
+		todayAttendees = 0
+	}
+
+	modelTS, _ := uc.MinioRepo.GetModelTimestamp(ctx)
+	datasetTS, _ := uc.MinioRepo.GetDatasetTimestamp(ctx)
+
+	// Needs retrain if dataset is newer than model
+	needsRetrain := datasetTS > modelTS
+
+	return &domain.AdminDashboard{
+		AdminName:      adminName,
+		TotalUsers:     totalUsers,
+		TodayAttendees: todayAttendees,
+		NeedsRetrain:   needsRetrain,
+		ModelTimestamp: modelTS,
+	}, nil
 }

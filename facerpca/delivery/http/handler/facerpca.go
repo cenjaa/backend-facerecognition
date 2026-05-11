@@ -164,14 +164,16 @@ func (h *FaceRPCAHandler) DeleteUser(c *fiber.Ctx) error {
 // @Router       /api/create_user [post]
 func (h *FaceRPCAHandler) CreateUser(c *fiber.Ctx) error {
 	var body struct {
-		Name  string `json:"name"`
-		NIP   string `json:"nip"`
-		Email string `json:"email"`
+		Name        string `json:"name"`
+		NIP         string `json:"nip"`
+		Email       string `json:"email"`
+		CreatedBy   string `json:"created_by"`
+		DatasetPath string `json:"dataset_path"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(400).JSON(fiber.Map{"status": "fail", "message": "Invalid request"})
 	}
-	userID, err := h.uc.CreateUser(c.Context(), body.Name, body.NIP, body.Email)
+	userID, err := h.uc.CreateUser(c.Context(), body.Name, body.NIP, body.Email, body.CreatedBy, body.DatasetPath)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"status": "fail", "message": err.Error()})
 	}
@@ -361,4 +363,19 @@ func (h *FaceRPCAHandler) GetTrainStatus(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "idle", "progress": 0, "message": ""})
 	}
 	return c.JSON(status)
+}
+
+// GetAdminDashboard godoc
+// @Summary      Get metrics for the admin dashboard
+// @Tags         Dashboard
+// @Param        id path int true "Admin User ID"
+// @Success      200 {object} domain.AdminDashboard
+// @Router       /api/admin_dashboard/{id} [get]
+func (h *FaceRPCAHandler) GetAdminDashboard(c *fiber.Ctx) error {
+	adminID, _ := strconv.Atoi(c.Params("id"))
+	result, err := h.uc.GetAdminDashboard(c.Context(), adminID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"status": "fail", "message": err.Error()})
+	}
+	return c.JSON(result)
 }

@@ -81,6 +81,7 @@ func SetupRouter(uc domain.FaceRPCAUsecase) *fiber.App {
 	// Dashboard
 	api.Get("/dashboard_stats", h.GetDashboardStats)
 	api.Get("/attendance_frequency", h.GetAttendanceFrequency)
+	api.Get("/admin_dashboard/:id", h.GetAdminDashboard)
 
 	// Auth
 	api.Post("/verify_pin", h.VerifyPin)

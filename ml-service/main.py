@@ -389,7 +389,7 @@ class StatusResponse(BaseModel):
 def health():
     return {"status": "ok", "service": "ml-training"}
 
-@app.post("/infer")
+@app.post("/api/infer")
 async def infer_face(file: UploadFile = File(...)):
     """Run face detection and recognition on uploaded image."""
     global global_svm, global_pca, global_label_map

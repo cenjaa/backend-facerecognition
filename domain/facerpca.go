@@ -54,7 +54,7 @@ type FaceRPCASQLRepository interface {
 	IsAdmin(ctx context.Context, userID int) (bool, error)
 	VerifyAdminPin(ctx context.Context, userID int, pin string) (bool, error)
 	GetByID(ctx context.Context, userID int) (*User, error)
-	CreateUser(ctx context.Context, name, nip, email string) (int, error)
+	CreateUser(ctx context.Context, name, nip, email, createdBy, datasetPath string) (int, error)
 	GetUserNameByID(ctx context.Context, userID int) (string, error)
 	GetAllActiveUsers(ctx context.Context) ([]User, error)
 	GetUserEmailByID(ctx context.Context, userID int) (string, error)
@@ -85,6 +85,8 @@ type FaceRPCASQLRepository interface {
 	GetHistory(ctx context.Context, page, perPage int) (*PaginatedResult[AttendanceHistoryRow], error)
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 	GetHourlyFrequency(ctx context.Context) (*HourlyFrequency, error)
+	GetTotalUserCount(ctx context.Context) (int, error)
+	GetTodayAttendeeCount(ctx context.Context) (int, error)
 }
 
 type FaceRPCAMinIORepository interface {
@@ -95,6 +97,7 @@ type FaceRPCAMinIORepository interface {
 	DeleteUserFaces(ctx context.Context, userID int) error
 	UploadUserFaces(ctx context.Context, userID int, localUserDir string) (int, error)
 	GetModelTimestamp(ctx context.Context) (float64, error)
+	GetDatasetTimestamp(ctx context.Context) (float64, error)
 }
 
 type FaceRPCAJiraRepository interface {
@@ -102,7 +105,7 @@ type FaceRPCAJiraRepository interface {
 }
 
 type FaceRPCAUsecase interface {
-	CreateUser(ctx context.Context, name, nip, email string) (int, error)
+	CreateUser(ctx context.Context, name, nip, email, createdBy, datasetPath string) (int, error)
 	UpdateUser(ctx context.Context, userID int, name, nip string, active bool) error
 	DeleteUser(ctx context.Context, userID int) error
 	VerifyAdminPin(ctx context.Context, userID int, pin string) (bool, string, error)
@@ -129,4 +132,13 @@ type FaceRPCAUsecase interface {
 	GetRecentJira(ctx context.Context) ([]JiraHistoryRow, error)
 	GetJiraHistory(ctx context.Context, page, perPage int) (*PaginatedResult[JiraHistoryRow], error)
 	GetKpiAccumulation(ctx context.Context, page, perPage int) (*PaginatedResult[KpiAccumulationRow], error)
+	GetAdminDashboard(ctx context.Context, adminID int) (*AdminDashboard, error)
+}
+
+type AdminDashboard struct {
+	AdminName      string  `json:"admin_name"`
+	TotalUsers     int     `json:"total_users"`
+	TodayAttendees int     `json:"today_attendees"`
+	NeedsRetrain   bool    `json:"needs_retrain"`
+	ModelTimestamp float64 `json:"model_timestamp"`
 }

@@ -176,3 +176,21 @@ func (r *FaceRPCAMinIORepository) GetModelTimestamp(ctx context.Context) (float6
 	}
 	return float64(info.LastModified.Unix()), nil
 }
+
+func (r *FaceRPCAMinIORepository) GetDatasetTimestamp(ctx context.Context) (float64, error) {
+	objectCh := r.client.ListObjects(ctx, r.bucketName, minio.ListObjectsOptions{
+		Prefix:    "dataset/",
+		Recursive: true,
+	})
+
+	var latest int64 = 0
+	for obj := range objectCh {
+		if obj.Err != nil {
+			continue
+		}
+		if obj.LastModified.Unix() > latest {
+			latest = obj.LastModified.Unix()
+		}
+	}
+	return float64(latest), nil
+}
