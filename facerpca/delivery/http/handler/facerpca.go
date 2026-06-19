@@ -3,6 +3,7 @@ package handler
 import (
 	"face-recognition-fyp/domain"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -238,14 +239,16 @@ func (h *FaceRPCAHandler) VerifyPin(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(400).JSON(fiber.Map{"status": "fail", "message": "Invalid request"})
 	}
-	valid, name, err := h.uc.VerifyAdminPin(c.Context(), body.UserID, body.Pin)
+	token, name, err := h.uc.VerifyAdminPin(c.Context(), body.UserID, body.Pin)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"status": "fail", "message": err.Error()})
+		// Usecase returns error for invalid pin/not admin
+		return c.Status(401).JSON(fiber.Map{"status": "fail", "message": err.Error()})
 	}
-	if !valid {
-		return c.JSON(fiber.Map{"status": "fail", "message": "Invalid PIN or not an admin"})
-	}
-	return c.JSON(fiber.Map{"status": "success", "name": name})
+	return c.JSON(fiber.Map{
+		"status": "success",
+		"name":   name,
+		"token":  token,
+	})
 }
 
 // GetDashboardStats godoc
@@ -377,5 +380,86 @@ func (h *FaceRPCAHandler) GetAdminDashboard(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"status": "fail", "message": err.Error()})
 	}
+	return c.JSON(result)
+}
+
+// LoginAdmin godoc
+// @Summary      Admin login with username/password
+// @Tags         Auth
+// @Param        body body object true "username, password"
+// @Success      200 {object} domain.AdminUser
+// @Router       /api/login_admin [post]
+func (h *FaceRPCAHandler) LoginAdmin(c *fiber.Ctx) error {
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"status": "fail", "message": "Invalid request"})
+	}
+	token, admin, err := h.uc.LoginAdmin(c.Context(), body.Username, body.Password)
+	if err != nil {
+		return c.Status(401).JSON(fiber.Map{"status": "fail", "message": "Invalid credentials"})
+	}
+	return c.JSON(fiber.Map{
+		"status": "success",
+		"token":  token,
+		"admin":  admin,
+	})
+}
+
+func (h *FaceRPCAHandler) LogoutAdmin(c *fiber.Ctx) error {
+	authHeader := c.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	
+	if err := h.uc.LogoutAdmin(c.Context(), token); err != nil {
+		return c.Status(500).JSON(fiber.Map{"status": "fail", "message": err.Error()})
+	}
+	return c.JSON(fiber.Map{"status": "success", "message": "Logged out successfully"})
+}
+
+// ExportAttendance godoc
+// @Summary      Export attendance to CSV
+// @Tags         History
+// @Param        date query string false "Date YYYY-MM-DD"
+// @Success      200 {file} file
+// @Router       /api/export_attendance [get]
+func (h *FaceRPCAHandler) ExportAttendance(c *fiber.Ctx) error {
+	date := c.Query("date")
+	data, err := h.uc.ExportAttendanceCSV(c.Context(), date)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"status": "fail", "message": err.Error()})
+	}
+	c.Set("Content-Type", "text/csv")
+	c.Set("Content-Disposition", "attachment; filename=attendance_history.csv")
+	return c.Send(data)
+}
+
+// ExportJira godoc
+// @Summary      Export Jira history and KPI to Excel
+// @Tags         History
+// @Success      200 {file} file
+// @Router       /api/export_jira [get]
+func (h *FaceRPCAHandler) ExportJira(c *fiber.Ctx) error {
+	data, err := h.uc.ExportJiraExcel(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"status": "fail", "message": err.Error()})
+	}
+	c.Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Set("Content-Disposition", "attachment; filename=jira_report.xlsx")
+	return c.Send(data)
+}
+
+func (h *FaceRPCAHandler) InferFace(c *fiber.Ctx) error {
+	file, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"status": "fail", "message": "No file uploaded"})
+	}
+
+	result, err := h.uc.InferFace(c.Context(), file)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"status": "error", "message": err.Error()})
+	}
+
 	return c.JSON(result)
 }

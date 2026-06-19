@@ -87,6 +87,10 @@ type FaceRPCASQLRepository interface {
 	GetHourlyFrequency(ctx context.Context) (*HourlyFrequency, error)
 	GetTotalUserCount(ctx context.Context) (int, error)
 	GetTodayAttendeeCount(ctx context.Context) (int, error)
+	GetAdminByCredentials(ctx context.Context, username, password string) (*AdminUser, error)
+	GetAllLogs(ctx context.Context, date string) ([]AttendanceHistoryRow, error)
+	GetAllJiraHistory(ctx context.Context) ([]JiraHistoryRow, error)
+	GetAllKpiAccumulation(ctx context.Context) ([]KpiAccumulationRow, error)
 }
 
 type FaceRPCAMinIORepository interface {
@@ -104,11 +108,17 @@ type FaceRPCAJiraRepository interface {
 	GetTasksForUser(ctx context.Context, email string) ([]JiraTask, error)
 }
 
+type FaceRPCARedisRepository interface {
+	SetSession(ctx context.Context, token string, userID int, duration time.Duration) error
+	GetSession(ctx context.Context, token string) (int, error)
+	DeleteSession(ctx context.Context, token string) error
+}
+
 type FaceRPCAUsecase interface {
 	CreateUser(ctx context.Context, name, nip, email, createdBy, datasetPath string) (int, error)
 	UpdateUser(ctx context.Context, userID int, name, nip string, active bool) error
 	DeleteUser(ctx context.Context, userID int) error
-	VerifyAdminPin(ctx context.Context, userID int, pin string) (bool, string, error)
+	VerifyAdminPin(ctx context.Context, userID int, pin string) (string, string, error)
 	RecordAttendance(ctx context.Context, userID int, mode string, confidence, latency float64) error
 	LogAttendanceRaw(ctx context.Context, rec BulkAttendanceRecord) error
 	LogAttendanceBulk(ctx context.Context, records []BulkAttendanceRecord) (int, error)
@@ -133,6 +143,11 @@ type FaceRPCAUsecase interface {
 	GetJiraHistory(ctx context.Context, page, perPage int) (*PaginatedResult[JiraHistoryRow], error)
 	GetKpiAccumulation(ctx context.Context, page, perPage int) (*PaginatedResult[KpiAccumulationRow], error)
 	GetAdminDashboard(ctx context.Context, adminID int) (*AdminDashboard, error)
+	LoginAdmin(ctx context.Context, username, password string) (string, *AdminUser, error)
+	LogoutAdmin(ctx context.Context, token string) error
+	ExportAttendanceCSV(ctx context.Context, date string) ([]byte, error)
+	ExportJiraExcel(ctx context.Context) ([]byte, error)
+	InferFace(ctx context.Context, fileHeader *multipart.FileHeader) (map[string]interface{}, error)
 }
 
 type AdminDashboard struct {

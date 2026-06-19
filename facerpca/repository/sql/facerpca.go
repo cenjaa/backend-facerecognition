@@ -119,8 +119,21 @@ func (r *FaceRPCASQLRepository) GetUserEmailByID(ctx context.Context, userID int
 }
 
 func (r *FaceRPCASQLRepository) GetAll(ctx context.Context) ([]domain.UserListRow, error) {
-	rows, err := r.DB.QueryContext(ctx,
-		`SELECT id_user, nama, nip, active FROM ms_user ORDER BY id_user ASC`)
+	query := `
+		SELECT 
+			u.id_user, u.nama, u.nip, u.active, COALESCE(u.created_by, ''),
+			COALESCE(s.deskripsi, 'Belum Absen') as status
+		FROM ms_user u
+		LEFT JOIN (
+			SELECT DISTINCT ON (id_user) id_user, id_status, presence_time
+			FROM tbl_log_attendance
+			WHERE DATE(presence_time) = CURRENT_DATE
+			ORDER BY id_user, presence_time DESC
+		) a ON u.id_user = a.id_user
+		LEFT JOIN ms_status s ON a.id_status = s.id_status
+		ORDER BY u.id_user ASC`
+
+	rows, err := r.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +142,7 @@ func (r *FaceRPCASQLRepository) GetAll(ctx context.Context) ([]domain.UserListRo
 	var users []domain.UserListRow
 	for rows.Next() {
 		var u domain.UserListRow
-		if err := rows.Scan(&u.ID, &u.Name, &u.NIP, &u.Active); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.NIP, &u.Active, &u.CreatedBy, &u.Status); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -390,7 +403,7 @@ func (r *FaceRPCASQLRepository) GetRecentJira(ctx context.Context, limit int) ([
 	for rows.Next() {
 		var row domain.JiraHistoryRow
 		var d time.Time
-		if rows.Scan(&row.ID, &row.Ticket, &row.Name, &row.Status, &d) != nil {
+		if rows.Scan(&row.No, &row.Ticket, &row.Name, &row.Status, &d) != nil {
 			continue
 		}
 		row.Date = d.Format("02/01/2006")
@@ -408,7 +421,7 @@ func (r *FaceRPCASQLRepository) GetJiraHistory(ctx context.Context, page, perPag
 	tp := int(math.Ceil(float64(total) / float64(perPage)))
 
 	rows, err := r.DB.QueryContext(ctx,
-		`SELECT k.id_kpi_harian, k.id_tiket_jira, k.nama_tiket, s.deskripsi, k.date
+		`SELECT ROW_NUMBER() OVER(ORDER BY k.date DESC, k.id_kpi_harian DESC), k.id_tiket_jira, k.nama_tiket, s.deskripsi, k.date
 		 FROM tbl_kpi_harian k
 		 JOIN ms_status_kpi s ON k.id_status_tiket=s.id_status_tiket
 		 ORDER BY k.date DESC, k.id_kpi_harian DESC LIMIT $1 OFFSET $2`, perPage, offset)
@@ -421,7 +434,7 @@ func (r *FaceRPCASQLRepository) GetJiraHistory(ctx context.Context, page, perPag
 	for rows.Next() {
 		var row domain.JiraHistoryRow
 		var d time.Time
-		if rows.Scan(&row.ID, &row.Ticket, &row.Name, &row.Status, &d) != nil {
+		if rows.Scan(&row.No, &row.Ticket, &row.Name, &row.Status, &d) != nil {
 			continue
 		}
 		row.Date = d.Format("02/01/2006 15:04:05")
@@ -442,7 +455,7 @@ func (r *FaceRPCASQLRepository) GetKpiAccumulation(ctx context.Context, page, pe
 	tp := int(math.Ceil(float64(total) / float64(perPage)))
 
 	rows, err := r.DB.QueryContext(ctx,
-		`SELECT id_user, nama, akumulasi_kpi
+		`SELECT ROW_NUMBER() OVER(ORDER BY akumulasi_kpi DESC), nama, akumulasi_kpi
 		 FROM ms_user WHERE akumulasi_kpi > 0
 		 ORDER BY akumulasi_kpi DESC LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
@@ -638,4 +651,100 @@ func (r *FaceRPCASQLRepository) GetTodayAttendeeCount(ctx context.Context) (int,
 	          WHERE DATE(presence_time) = CURRENT_DATE AND id_status IN (1, 3)`
 	err := r.DB.QueryRowContext(ctx, query).Scan(&count)
 	return count, err
+}
+
+func (r *FaceRPCASQLRepository) GetAdminByCredentials(ctx context.Context, username, password string) (*domain.AdminUser, error) {
+	query := `SELECT a.id_admin, a.id_user, u.nama, a.username, a.active 
+	          FROM ms_admin a 
+	          JOIN ms_user u ON a.id_user = u.id_user 
+	          WHERE a.username = $1 AND a.password = $2 AND a.active = TRUE`
+
+	var admin domain.AdminUser
+	err := r.DB.QueryRowContext(ctx, query, username, password).Scan(
+		&admin.IDAdmin, &admin.IDUser, &admin.Name, &admin.Username, &admin.Active,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &admin, nil
+}
+
+func (r *FaceRPCASQLRepository) GetAllLogs(ctx context.Context, date string) ([]domain.AttendanceHistoryRow, error) {
+	query := `SELECT ROW_NUMBER() OVER(ORDER BY a.presence_time DESC), u.nama, u.nip, s.deskripsi, a.confidence, a.latency_ms, a.presence_time
+	          FROM tbl_log_attendance a
+	          JOIN ms_user u ON a.id_user=u.id_user
+	          JOIN ms_status s ON a.id_status=s.id_status`
+	
+	var args []interface{}
+	if date != "" {
+		query += ` WHERE DATE(a.presence_time) = $1`
+		args = append(args, date)
+	}
+	query += ` ORDER BY a.presence_time DESC`
+
+	rows, err := r.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []domain.AttendanceHistoryRow
+	for rows.Next() {
+		var row domain.AttendanceHistoryRow
+		var conf, lat float64
+		var t time.Time
+		if err := rows.Scan(&row.No, &row.Name, &row.NIP, &row.Status, &conf, &lat, &t); err != nil {
+			continue
+		}
+		row.Confidence = int(math.Round(conf * 100))
+		row.Latency = strconv.FormatFloat(lat, 'f', 3, 64) + " ms"
+		row.Time = t.Format("02/01/2006 15:04:05")
+		records = append(records, row)
+	}
+	return records, rows.Err()
+}
+
+func (r *FaceRPCASQLRepository) GetAllJiraHistory(ctx context.Context) ([]domain.JiraHistoryRow, error) {
+	rows, err := r.DB.QueryContext(ctx,
+		`SELECT ROW_NUMBER() OVER(ORDER BY k.date DESC), k.id_tiket_jira, k.nama_tiket, s.deskripsi, k.date
+		 FROM tbl_kpi_harian k
+		 JOIN ms_status_kpi s ON k.id_status_tiket=s.id_status_tiket
+		 ORDER BY k.date DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []domain.JiraHistoryRow
+	for rows.Next() {
+		var row domain.JiraHistoryRow
+		var d time.Time
+		if rows.Scan(&row.No, &row.Ticket, &row.Name, &row.Status, &d) != nil {
+			continue
+		}
+		row.Date = d.Format("02/01/2006 15:04:05")
+		records = append(records, row)
+	}
+	return records, rows.Err()
+}
+
+func (r *FaceRPCASQLRepository) GetAllKpiAccumulation(ctx context.Context) ([]domain.KpiAccumulationRow, error) {
+	rows, err := r.DB.QueryContext(ctx,
+		`SELECT ROW_NUMBER() OVER(ORDER BY akumulasi_kpi DESC), nama, akumulasi_kpi
+		 FROM ms_user WHERE akumulasi_kpi > 0
+		 ORDER BY akumulasi_kpi DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []domain.KpiAccumulationRow
+	for rows.Next() {
+		var row domain.KpiAccumulationRow
+		if rows.Scan(&row.No, &row.Name, &row.TotalTiket) != nil {
+			continue
+		}
+		records = append(records, row)
+	}
+	return records, rows.Err()
 }

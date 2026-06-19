@@ -11,6 +11,7 @@ import (
 	_RepoJira "face-recognition-fyp/facerpca/repository/jira"
 	_RepoMinio "face-recognition-fyp/facerpca/repository/minio"
 	_RepoSQL "face-recognition-fyp/facerpca/repository/sql"
+	_RepoRedis "face-recognition-fyp/facerpca/repository/redis"
 	_Usecase "face-recognition-fyp/facerpca/usecase"
 
 	"github.com/go-co-op/gocron"
@@ -19,6 +20,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
+	"github.com/redis/go-redis/v9"
 )
 
 func initDB() *sql.DB {
@@ -69,6 +71,24 @@ func initMinio() *minio.Client {
 	return minioClient
 }
 
+func initRedis() *redis.Client {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%s", viper.GetString("redis.host"), viper.GetString("redis.port")),
+		Password: viper.GetString("redis.password"),
+		DB:       viper.GetInt("redis.database"),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		log.Fatalf("FATAL: Failed to CONNECT to Redis: %v", err)
+	}
+
+	log.Info("Redis Connection Success.")
+	return rdb
+}
+
 func main() {
 	configFile := flag.String("c", "config.yaml", "Config file")
 	flag.Parse()
@@ -84,11 +104,13 @@ func main() {
 	// ── 1. Infrastructure ──
 	db := initDB()
 	minioClient := initMinio()
+	redisClient := initRedis()
 	bucketName := viper.GetString("minio.bucket_name")
 
 	// ── 2. Repositories ──
 	repoSQL := _RepoSQL.NewFaceRPCASQLRepository(db)
 	repoMinio := _RepoMinio.NewStorageRepo(minioClient, bucketName)
+	repoRedis := _RepoRedis.NewRedisRepository(redisClient)
 	repoJira := _RepoJira.NewService(
 		viper.GetString("jira.url"),
 		viper.GetString("jira.email"),
@@ -98,7 +120,7 @@ func main() {
 
 	// ── 3. Usecase ──
 	mlServiceURL := viper.GetString("ml_service.url")
-	facerpcaUsecase := _Usecase.NewFaceRPCAUsecase(repoMinio, repoSQL, repoJira, mlServiceURL)
+	facerpcaUsecase := _Usecase.NewFaceRPCAUsecase(repoMinio, repoSQL, repoJira, repoRedis, mlServiceURL)
 
 	// ── 4. Scheduler ──
 	log.Info("Initializing scheduler...")
@@ -148,7 +170,7 @@ func main() {
 	scheduler.StartAsync()
 	log.Info("Scheduler started: DailyInit (05:00), JiraCatchup (07:00), Absent (09:00), Jira (30m), ClockOut (20:00)")
 
-	app := _DeliveryHTTP.SetupRouter(facerpcaUsecase)
+	app := _DeliveryHTTP.SetupRouter(facerpcaUsecase, repoRedis)
 
 	port := viper.GetString("server.port")
 	if port == "" {

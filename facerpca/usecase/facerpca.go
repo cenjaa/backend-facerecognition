@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"face-recognition-fyp/constant"
@@ -13,20 +14,27 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/spf13/viper"
+
+	"github.com/xuri/excelize/v2"
 )
 
 type FaceRPCAUsecase struct {
 	MinioRepo    domain.FaceRPCAMinIORepository
 	SQLRepo      domain.FaceRPCASQLRepository
 	JiraRepo     domain.FaceRPCAJiraRepository
+	RedisRepo    domain.FaceRPCARedisRepository
 	MLServiceURL string
 }
 
-func NewFaceRPCAUsecase(m domain.FaceRPCAMinIORepository, s domain.FaceRPCASQLRepository, j domain.FaceRPCAJiraRepository, mlServiceURL string) *FaceRPCAUsecase {
+func NewFaceRPCAUsecase(m domain.FaceRPCAMinIORepository, s domain.FaceRPCASQLRepository, j domain.FaceRPCAJiraRepository, r domain.FaceRPCARedisRepository, mlServiceURL string) *FaceRPCAUsecase {
 	return &FaceRPCAUsecase{
 		MinioRepo:    m,
 		SQLRepo:      s,
 		JiraRepo:     j,
+		RedisRepo:    r,
 		MLServiceURL: strings.TrimRight(mlServiceURL, "/"),
 	}
 }
@@ -46,25 +54,32 @@ func (uc *FaceRPCAUsecase) DeleteUser(ctx context.Context, userID int) error {
 	return uc.SQLRepo.Delete(ctx, userID)
 }
 
-func (uc *FaceRPCAUsecase) VerifyAdminPin(ctx context.Context, userID int, pin string) (bool, string, error) {
+func (uc *FaceRPCAUsecase) VerifyAdminPin(ctx context.Context, userID int, pin string) (string, string, error) {
 	isAdmin, err := uc.SQLRepo.IsAdmin(ctx, userID)
 	if err != nil {
-		return false, "", err
+		return "", "", err
 	}
 	if !isAdmin {
-		return false, "", nil
+		return "", "", fmt.Errorf("user is not an admin")
 	}
 
 	valid, err := uc.SQLRepo.VerifyAdminPin(ctx, userID, pin)
 	if err != nil {
-		return false, "", err
+		return "", "", err
 	}
 	if !valid {
-		return false, "", nil
+		return "", "", fmt.Errorf("invalid pin")
 	}
 
 	name, _ := uc.SQLRepo.GetUserNameByID(ctx, userID)
-	return true, name, nil
+
+	// Generate JWT for the verified admin
+	token, err := uc.generateToken(ctx, userID)
+	if err != nil {
+		return "", name, err
+	}
+
+	return token, name, nil
 }
 
 // RecordAttendance handles face recognition login. No manual logoff — clock out is automatic at 20:00.
@@ -148,6 +163,53 @@ func (uc *FaceRPCAUsecase) UploadDataset(ctx context.Context, userID int, fileHe
 	// Upload folder to MinIO
 	_, err = uc.MinioRepo.UploadUserFaces(ctx, userID, tempDir)
 	return err
+}
+
+func (uc *FaceRPCAUsecase) InferFace(ctx context.Context, fileHeader *multipart.FileHeader) (map[string]interface{}, error) {
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", fileHeader.Filename)
+	if err != nil {
+		return nil, err
+	}
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return nil, err
+	}
+	writer.Close()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", uc.MLServiceURL+"/api/infer", body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ML service unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	// High-visibility confidence log
+	if detected, ok := result["detected"].(bool); ok && detected {
+		fmt.Printf("🎯 [FACE] User %v detected with %.2f%% confidence\n", result["user_id"], result["confidence"])
+	} else {
+		fmt.Printf("👁️ [FACE] No match or low confidence (%.2f%%)\n", result["confidence"])
+	}
+
+	return result, nil
 }
 
 func (uc *FaceRPCAUsecase) TrainModel(ctx context.Context) error {
@@ -407,4 +469,114 @@ func (uc *FaceRPCAUsecase) GetAdminDashboard(ctx context.Context, adminID int) (
 		NeedsRetrain:   needsRetrain,
 		ModelTimestamp: modelTS,
 	}, nil
+}
+
+func (uc *FaceRPCAUsecase) LoginAdmin(ctx context.Context, username, password string) (string, *domain.AdminUser, error) {
+	admin, err := uc.SQLRepo.GetAdminByCredentials(ctx, username, password)
+	if err != nil {
+		return "", nil, err
+	}
+
+	tokenString, err := uc.generateToken(ctx, admin.IDUser)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return tokenString, admin, nil
+}
+
+func (uc *FaceRPCAUsecase) generateToken(ctx context.Context, userID int) (string, error) {
+	// Generate JWT
+	secret := viper.GetString("server.jwt_secret")
+	if secret == "" {
+		secret = "pnm-face-recognition-secret-key-2024" // Fallback
+	}
+
+	claims := jwt.MapClaims{
+		"admin_id": userID,
+		"exp":      time.Now().Add(60 * time.Minute).Unix(), // Extended to 60m for comfort
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(secret))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	// Store in Redis
+	err = uc.RedisRepo.SetSession(ctx, tokenString, userID, 60*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("failed to store session: %w", err)
+	}
+
+	return tokenString, nil
+}
+
+func (uc *FaceRPCAUsecase) LogoutAdmin(ctx context.Context, token string) error {
+	return uc.RedisRepo.DeleteSession(ctx, token)
+}
+
+func (uc *FaceRPCAUsecase) ExportAttendanceCSV(ctx context.Context, date string) ([]byte, error) {
+	logs, err := uc.SQLRepo.GetAllLogs(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+
+	var sb strings.Builder
+	sb.WriteString("No,Nama,NIP,Status,Confidence,Latency,Waktu\n")
+	for _, l := range logs {
+		sb.WriteString(fmt.Sprintf("%d,%s,%s,%s,%d,%s,%s\n", 
+			l.No, l.Name, l.NIP, l.Status, l.Confidence, l.Latency, l.Time))
+	}
+	return []byte(sb.String()), nil
+}
+
+func (uc *FaceRPCAUsecase) ExportJiraExcel(ctx context.Context) ([]byte, error) {
+	history, err := uc.SQLRepo.GetAllJiraHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accumulation, err := uc.SQLRepo.GetAllKpiAccumulation(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	f := excelize.NewFile()
+	defer f.Close()
+
+	// Sheet 1: Jira History
+	sheet1 := "History Jira"
+	f.SetSheetName("Sheet1", sheet1)
+	f.SetCellValue(sheet1, "A1", "No")
+	f.SetCellValue(sheet1, "B1", "Ticket ID")
+	f.SetCellValue(sheet1, "C1", "Nama Tiket")
+	f.SetCellValue(sheet1, "D1", "Status")
+	f.SetCellValue(sheet1, "E1", "Tanggal")
+	for i, h := range history {
+		row := i + 2
+		f.SetCellValue(sheet1, fmt.Sprintf("A%d", row), h.No)
+		f.SetCellValue(sheet1, fmt.Sprintf("B%d", row), h.Ticket)
+		f.SetCellValue(sheet1, fmt.Sprintf("C%d", row), h.Name)
+		f.SetCellValue(sheet1, fmt.Sprintf("D%d", row), h.Status)
+		f.SetCellValue(sheet1, fmt.Sprintf("E%d", row), h.Date)
+	}
+
+	// Sheet 2: KPI Accumulation
+	sheet2 := "Akumulasi KPI"
+	f.NewSheet(sheet2)
+	f.SetCellValue(sheet2, "A1", "No")
+	f.SetCellValue(sheet2, "B1", "Nama Karyawan")
+	f.SetCellValue(sheet2, "C1", "Total Tiket")
+	for i, a := range accumulation {
+		row := i + 2
+		f.SetCellValue(sheet2, fmt.Sprintf("A%d", row), a.No)
+		f.SetCellValue(sheet2, fmt.Sprintf("B%d", row), a.Name)
+		f.SetCellValue(sheet2, fmt.Sprintf("C%d", row), a.TotalTiket)
+	}
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

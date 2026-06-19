@@ -1,0 +1,6 @@
+# Secrets — never commit these
+.env
+config.yaml
+
+# SQL dump — large binary, keep locally or store separately
+init-db/dump-ATTENDANCE_DB.sql

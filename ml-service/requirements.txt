@@ -1,9 +1,0 @@
-fastapi
-uvicorn[standard]
-opencv-python-headless
-numpy
-joblib
-scikit-learn
-pygad
-boto3
-PyYAML

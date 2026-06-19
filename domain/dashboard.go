@@ -35,7 +35,7 @@ type AttendanceHistoryRow struct {
 }
 
 type JiraHistoryRow struct {
-	ID     int    `json:"id"`
+	No     int    `json:"no"`
 	Ticket string `json:"ticket"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
@@ -65,10 +65,12 @@ type BulkAttendanceRecord struct {
 }
 
 type UserListRow struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	NIP    string `json:"nip"`
-	Active bool   `json:"active"`
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	NIP       string `json:"nip"`
+	Active    bool   `json:"active"`
+	Status    string `json:"status"`
+	CreatedBy string `json:"created_by"`
 }
 
 type TrainStatus struct {
