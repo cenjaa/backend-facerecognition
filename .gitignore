@@ -1,6 +1,7 @@
 # ── Secrets & local config (NEVER commit these) ──────────────
 .env
 config.yaml
+skripsi.md
 
 # ── Go build artifacts ────────────────────────────────────────
 *.exe
@@ -29,13 +30,9 @@ build/
 .eggs/
 *.log
 
-# ── ML large files ────────────────────────────────────────────
-# Uncomment below if you do NOT want model files in git (transfer via SCP instead)
-# ml-service/models/
-# dataset/
-# videos/
-# ml-service/dataset/
-# ml-service/debug_output/
+# ── ML large files & personal data ────────────────────────────
+dataset/
+videos/
 
 # ── IDE / OS ──────────────────────────────────────────────────
 .idea/

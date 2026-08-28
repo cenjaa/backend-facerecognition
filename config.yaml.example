@@ -1,0 +1,37 @@
+server:
+  port: "5000"
+  api_key: ""
+
+database:
+  status: true
+  host: "postgres"
+  port: "5432"
+  database: "ATTENDANCE_DB"
+  user: "admin"
+  password: "your_strong_db_password_here"
+  ssl_mode: "disable"
+
+minio:
+  endpoint: "minio:9000"
+  access_key: "your_minio_access_key"
+  secret_key: "your_minio_secret_key"
+  bucket_name: "attendance"
+  use_ssl: false
+
+redis:
+  host: "redis"
+  port: "6379"
+  max_connection: 80
+  username: ""
+  password: "your_redis_password_here"
+  database: 0
+  tls_config: false
+
+jira:
+  url: "https://your-domain.atlassian.net/"
+  email: "your_email@example.com"
+  token: "your_jira_api_token_here"
+  project_key: "SCRUM"
+
+ml_service:
+  url: "http://ml-service:8001"
